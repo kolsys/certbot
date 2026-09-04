@@ -140,11 +140,21 @@ def atomic_rewrite(config_filename: str, new_config: configobj.ConfigObj) -> Non
                                         file_error=True)
     merged_config.merge(new_config)
 
-    # We merge and then delete, rather than just replacing the 'renewalparams' section, so we can
-    # preserve comments from the on-disk config file.
-    for k in merged_config["renewalparams"]:
-        if k not in new_config["renewalparams"]:
-            del merged_config["renewalparams"][k]
+    # When updating the "renewalparams" section, only carry through fields that actually exist
+    # in the new config's "renewalparams" section. We could achieve this straightforwardly by
+    # assigning the new config's "renewalparams" section into the merged config. But then we would
+    # lose comments. Merging and then deleting allows us to preserve comments.
+    #
+    # As a concrete example, if a renewal params config has elliptic_curve=secp384r1, and the
+    # user executes a command to issue with `--key-type=rsa` instead, the old elliptic_curve value
+    # should disappear because it's not specified in the current command line.
+    #
+    # This only applies when "renewalparams" is actually being updated, because sometimes we
+    # update other sections independently (like "acme_renewal_info").
+    if "renewalparams" in new_config:
+        for k in merged_config["renewalparams"]:
+            if k not in new_config["renewalparams"]:
+                del merged_config["renewalparams"][k]
 
     current_permissions = stat.S_IMODE(os.lstat(config_filename).st_mode)
 
@@ -158,25 +168,6 @@ def atomic_rewrite(config_filename: str, new_config: configobj.ConfigObj) -> Non
         merged_config.write(outfile=f)
 
     filesystem.replace(temp_filename, config_filename)
-
-
-def rename_renewal_config(prev_name: str, new_name: str,
-                          cli_config: configuration.NamespaceConfig) -> None:
-    """Renames cli_config.certname's config to cli_config.new_certname.
-
-    :param .NamespaceConfig cli_config: parsed command line
-        arguments
-    """
-    prev_filename = renewal_filename_for_lineagename(cli_config, prev_name)
-    new_filename = renewal_filename_for_lineagename(cli_config, new_name)
-    if os.path.exists(new_filename):
-        raise errors.ConfigurationError("The new certificate name "
-            "is already in use.")
-    try:
-        filesystem.replace(prev_filename, new_filename)
-    except OSError:
-        raise errors.ConfigurationError("Please specify a valid filename "
-            "for the new certificate name.")
 
 
 def update_configuration(lineagename: str, archive_dir: str, target: Mapping[str, str],
